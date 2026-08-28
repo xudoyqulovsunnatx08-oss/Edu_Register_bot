@@ -6,6 +6,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
 const ADMIN_PHONE = '+998 88 176 26 66';
+const CHANNEL_USERNAME = '@Turk_akademisi';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
@@ -148,10 +149,62 @@ function mainMenuKeyboard(chatId) {
   ]).resize();
 }
 
+// ==== Kanalga obuna tekshiruvi ====
+const subscribeTexts = {
+  uz: {
+    notSubscribed:
+      "🇹🇷 <b>Turk tili o'quv kursi</b>\n\n" +
+      "Botdan foydalanish uchun avval bizning kanalimizga a'zo bo'ling, " +
+      "so'ng \"✅ Tekshirish\" tugmasini bosing.",
+    subscribeBtn: "📢 Kanalga o'tish",
+    checkBtn: "✅ Tekshirish",
+    stillNot: "❗️ Siz hali kanalga a'zo bo'lmagansiz. Iltimos, avval a'zo bo'ling.",
+  },
+  ru: {
+    notSubscribed:
+      "🇹🇷 <b>Курсы турецкого языка</b>\n\n" +
+      "Чтобы пользоваться ботом, сначала подпишитесь на наш канал, " +
+      "затем нажмите \"✅ Проверить\".",
+    subscribeBtn: "📢 Перейти в канал",
+    checkBtn: "✅ Проверить",
+    stillNot: "❗️ Вы ещё не подписаны на канал. Пожалуйста, подпишитесь сначала.",
+  },
+};
+
+async function isSubscribed(ctx, chatId) {
+  try {
+    const member = await ctx.telegram.getChatMember(CHANNEL_USERNAME, chatId);
+    return !['left', 'kicked'].includes(member.status);
+  } catch (e) {
+    console.error('Obuna tekshirish xatosi:', e.message);
+    return false;
+  }
+}
+
+function subscribePrompt(chatId) {
+  const lang = userLang[chatId] || 'uz';
+  const st = subscribeTexts[lang];
+  return {
+    text: st.notSubscribed,
+    keyboard: Markup.inlineKeyboard([
+      [Markup.button.url(st.subscribeBtn, `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
+      [Markup.button.callback(st.checkBtn, 'check_sub')],
+    ]),
+  };
+}
+
 // ==== /start ====
-bot.start((ctx) => {
+bot.start(async (ctx) => {
   const chatId = ctx.chat.id;
   delete regState[chatId];
+
+  const subscribed = await isSubscribed(ctx, chatId);
+  if (!subscribed) {
+    const prompt = subscribePrompt(chatId);
+    ctx.replyWithHTML(prompt.text, prompt.keyboard);
+    return;
+  }
+
   ctx.replyWithHTML(
     texts.uz.intro,
     Markup.inlineKeyboard([
@@ -161,12 +214,54 @@ bot.start((ctx) => {
   );
 });
 
+// ==== "Tekshirish" tugmasi ====
+bot.action('check_sub', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const subscribed = await isSubscribed(ctx, chatId);
+
+  if (subscribed) {
+    ctx.answerCbQuery();
+    ctx.replyWithHTML(
+      texts.uz.intro,
+      Markup.inlineKeyboard([
+        [Markup.button.callback(texts.uz.langBtn, 'lang:uz')],
+        [Markup.button.callback(texts.ru.langBtn, 'lang:ru')],
+      ])
+    );
+  } else {
+    const lang = userLang[chatId] || 'uz';
+    ctx.answerCbQuery(subscribeTexts[lang].stillNot, { show_alert: true });
+  }
+});
+
 // ==== Til tanlash ====
 bot.action(/lang:(uz|ru)/, (ctx) => {
   const chatId = ctx.chat.id;
   userLang[chatId] = ctx.match[1];
   ctx.answerCbQuery();
   ctx.reply(t(chatId).mainMenuTitle, mainMenuKeyboard(chatId));
+});
+
+// ==== Majburiy obuna middleware ====
+// /start va "check_sub" o'zi ichida tekshiradi, shuning uchun bu yerda o'tkazib yuboriladi.
+// Admin foydalanuvchilar tekshiruvdan ozod qilinadi.
+bot.use(async (ctx, next) => {
+  const chatId = ctx.chat && ctx.chat.id;
+  if (!chatId) return next();
+  if (isAdmin(chatId)) return next();
+
+  const isStartCmd = ctx.message && ctx.message.text === '/start';
+  const isCheckSubAction = ctx.callbackQuery && ctx.callbackQuery.data === 'check_sub';
+  if (isStartCmd || isCheckSubAction) return next();
+
+  const subscribed = await isSubscribed(ctx, chatId);
+  if (!subscribed) {
+    if (ctx.callbackQuery) ctx.answerCbQuery();
+    const prompt = subscribePrompt(chatId);
+    ctx.replyWithHTML(prompt.text, prompt.keyboard);
+    return;
+  }
+  return next();
 });
 
 // ==== Asosiy menyu tugmalari ====
