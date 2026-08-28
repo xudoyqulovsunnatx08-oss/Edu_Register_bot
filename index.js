@@ -2,6 +2,8 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const XLSX = require('xlsx');
+const cron = require('node-cron');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
@@ -71,6 +73,7 @@ const texts = {
     menuRegister: "📝 Ro'yxatdan o'tish",
     menuInfo: "ℹ️ Ma'lumot",
     menuContact: "📞 Aloqa",
+    menuPricing: "💰 Narxlar",
     chooseFormat: "O'qish shaklini tanlang:",
     online: "💻 Onlayn",
     offline: "🏫 Oflayn",
@@ -96,6 +99,13 @@ const texts = {
       "👨‍🏫 Tajribali o'qituvchilar\n" +
       "📚 Zamonaviy o'quv materiallari\n\n" +
       "Ro'yxatdan o'tish uchun \"📝 Ro'yxatdan o'tish\" tugmasini bosing.",
+    pricingText:
+      "💰 <b>Kurs narxlari</b>\n\n" +
+      "💻 <b>Onlayn:</b> 250 000 so'm/oy\n" +
+      "  Haftada 4 kun dars\n\n" +
+      "🏫 <b>Oflayn:</b> 300 000 so'm/oy\n" +
+      "  Haftada 4 kun dars\n\n" +
+      `Batafsil ma'lumot uchun admin bilan bog'laning: ${ADMIN_PHONE}`,
   },
   ru: {
     intro:
@@ -109,6 +119,7 @@ const texts = {
     menuRegister: "📝 Регистрация",
     menuInfo: "ℹ️ Информация",
     menuContact: "📞 Контакты",
+    menuPricing: "💰 Цены",
     chooseFormat: "Выберите формат обучения:",
     online: "💻 Онлайн",
     offline: "🏫 Офлайн",
@@ -134,6 +145,13 @@ const texts = {
       "👨‍🏫 Опытные преподаватели\n" +
       "📚 Современные учебные материалы\n\n" +
       "Чтобы зарегистрироваться, нажмите \"📝 Регистрация\".",
+    pricingText:
+      "💰 <b>Цены на курс</b>\n\n" +
+      "💻 <b>Онлайн:</b> 250 000 сум/мес\n" +
+      "  4 занятия в неделю\n\n" +
+      "🏫 <b>Офлайн:</b> 300 000 сум/мес\n" +
+      "  4 занятия в неделю\n\n" +
+      `Подробнее у администратора: ${ADMIN_PHONE}`,
   },
 };
 
@@ -145,6 +163,7 @@ function mainMenuKeyboard(chatId) {
   const tt = t(chatId);
   return Markup.keyboard([
     [tt.menuRegister],
+    [tt.menuPricing],
     [tt.menuInfo, tt.menuContact],
   ]).resize();
 }
@@ -286,6 +305,10 @@ bot.hears([texts.uz.menuContact, texts.ru.menuContact], (ctx) => {
   ctx.replyWithHTML(t(ctx.chat.id).contactText);
 });
 
+bot.hears([texts.uz.menuPricing, texts.ru.menuPricing], (ctx) => {
+  ctx.replyWithHTML(t(ctx.chat.id).pricingText);
+});
+
 // ==== Format (onlayn/oflayn) tanlash ====
 bot.action(/format:(online|offline)/, (ctx) => {
   const chatId = ctx.chat.id;
@@ -361,6 +384,8 @@ bot.command('admin', (ctx) => {
     Markup.inlineKeyboard([
       [Markup.button.callback("👥 O'quvchilar", 'admin:students')],
       [Markup.button.callback("📊 Statistika", 'admin:stats')],
+      [Markup.button.callback("📥 Excel yuklab olish", 'admin:export')],
+      [Markup.button.callback("📢 Xabar yuborish", 'admin:broadcast')],
     ])
   );
 });
@@ -416,7 +441,57 @@ bot.action('admin:stats', (ctx) => {
   ctx.replyWithHTML(msg);
 });
 
-// ==== Matnli qadamlar: ism, yosh, telefon (qo'lda kiritilsa) ====
+// ==== Excel eksport ====
+bot.action('admin:export', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return ctx.answerCbQuery();
+  ctx.answerCbQuery();
+
+  if (students.length === 0) {
+    ctx.reply("Hozircha ro'yxatdan o'tgan o'quvchilar yo'q.");
+    return;
+  }
+
+  const rows = students.map((s, i) => ({
+    '№': i + 1,
+    'Ism familiya': s.name,
+    'Yosh': s.age,
+    'Telefon': s.phone,
+    'Format': s.format === 'online' ? 'Onlayn' : 'Oflayn',
+    'Daraja': s.level,
+    'Til': s.lang === 'ru' ? 'Rus' : "O'zbek",
+    'Ro\'yxatdan o\'tgan sana': new Date(s.date).toLocaleString('uz-UZ'),
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "O'quvchilar");
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+  ctx.replyWithDocument({ source: buffer, filename: 'oquvchilar.xlsx' });
+});
+
+// ==== Xabar yuborish (Broadcast) ====
+const adminState = {}; // chatId -> { mode: 'broadcast' }
+
+bot.action('admin:broadcast', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return ctx.answerCbQuery();
+  ctx.answerCbQuery();
+  adminState[chatId] = { mode: 'broadcast' };
+  ctx.reply(
+    "📢 Barcha o'quvchilarga yuboriladigan xabar matnini yozing.\n\n" +
+    "Bekor qilish uchun /cancel yozing."
+  );
+});
+
+bot.command('cancel', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (adminState[chatId]) {
+    delete adminState[chatId];
+    ctx.reply("❌ Bekor qilindi.");
+  }
+});
 // Bu handler ENG OXIRIDA turishi kerak, chunki u barcha matnlarni ushlaydi
 bot.on('text', async (ctx) => {
   const chatId = ctx.chat.id;
@@ -425,6 +500,30 @@ bot.on('text', async (ctx) => {
   const tt = t(chatId);
 
   if (text.startsWith('/')) return; // buyruqlarni bu yerda ishlatmaymiz
+
+  // ==== Admin broadcast rejimida bo'lsa ====
+  if (isAdmin(chatId) && adminState[chatId] && adminState[chatId].mode === 'broadcast') {
+    delete adminState[chatId];
+
+    const uniqueChatIds = [...new Set(students.map(s => s.chatId))];
+    let sent = 0;
+    let failed = 0;
+
+    ctx.reply(`⏳ ${uniqueChatIds.length} ta o'quvchiga yuborilmoqda...`);
+
+    for (const targetId of uniqueChatIds) {
+      try {
+        await ctx.telegram.sendMessage(targetId, text);
+        sent++;
+      } catch (e) {
+        failed++;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50)); // Telegram limitiga zid bo'lmaslik uchun
+    }
+
+    ctx.reply(`✅ Yuborildi: ${sent} ta\n❌ Yetib bormadi: ${failed} ta`);
+    return;
+  }
 
   // Agar ro'yxatdan o'tish jarayonida bo'lmasa — bu erkin savol, AI javob beradi
   if (!state) {
@@ -501,6 +600,60 @@ function finishRegistration(ctx, chatId, state) {
 
   ctx.replyWithHTML(tt.regDone(student), mainMenuKeyboard(chatId));
 }
+
+// ==== Kunlik so'z eslatmasi ====
+const dailyWords = [
+  { tr: "merhaba", uz: "salom", ru: "привет" },
+  { tr: "teşekkür ederim", uz: "rahmat", ru: "спасибо" },
+  { tr: "günaydın", uz: "xayrli tong", ru: "доброе утро" },
+  { tr: "iyi akşamlar", uz: "xayrli kech", ru: "добрый вечер" },
+  { tr: "nasılsın", uz: "qandaysiz", ru: "как дела" },
+  { tr: "evet", uz: "ha", ru: "да" },
+  { tr: "hayır", uz: "yo'q", ru: "нет" },
+  { tr: "su", uz: "suv", ru: "вода" },
+  { tr: "ekmek", uz: "non", ru: "хлеб" },
+  { tr: "kitap", uz: "kitob", ru: "книга" },
+  { tr: "araba", uz: "mashina", ru: "машина" },
+  { tr: "ev", uz: "uy", ru: "дом" },
+  { tr: "okul", uz: "maktab", ru: "школа" },
+  { tr: "dost", uz: "do'st", ru: "друг" },
+  { tr: "aile", uz: "oila", ru: "семья" },
+  { tr: "güzel", uz: "chiroyli", ru: "красивый" },
+  { tr: "büyük", uz: "katta", ru: "большой" },
+  { tr: "küçük", uz: "kichik", ru: "маленький" },
+  { tr: "para", uz: "pul", ru: "деньги" },
+  { tr: "zaman", uz: "vaqt", ru: "время" },
+];
+
+async function sendDailyWords() {
+  // 20 tadan so'zlar ro'yxatidan tasodifiy 10 tasini olamiz
+  const shuffled = [...dailyWords].sort(() => 0.5 - Math.random());
+  const selected = shuffled.slice(0, 10);
+  const uniqueStudents = [...new Map(students.map(s => [s.chatId, s])).values()];
+
+  for (const s of uniqueStudents) {
+    const lang = s.lang || 'uz';
+    const title = lang === 'ru' ? '📩 <b>10 слов дня</b>\n' : "📩 <b>Kunning 10 ta so'zi</b>\n";
+    const lines = selected
+      .map((w, i) => `${i + 1}. ${w.tr} — ${lang === 'ru' ? w.ru : w.uz}`)
+      .join('\n');
+    const msg = `${title}\n${lines}`;
+
+    try {
+      await bot.telegram.sendMessage(s.chatId, msg, { parse_mode: 'HTML' });
+    } catch (e) {
+      // Foydalanuvchi botni bloklagan bo'lishi mumkin — o'tkazib yuboramiz
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
+// Har kuni 09:00, 13:00 va 21:00 da (Toshkent vaqti bilan)
+['0 9 * * *', '0 13 * * *', '0 21 * * *'].forEach(cronTime => {
+  cron.schedule(cronTime, () => {
+    sendDailyWords();
+  }, { timezone: 'Asia/Tashkent' });
+});
 
 bot.launch();
 console.log("Bot ishga tushdi...");
