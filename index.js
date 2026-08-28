@@ -555,7 +555,8 @@ bot.on('text', async (ctx) => {
   if (isAdmin(chatId) && adminState[chatId] && adminState[chatId].mode === 'broadcast') {
     delete adminState[chatId];
 
-    const uniqueChatIds = [...new Set(allUsers.map(u => u.chatId))];
+    const uniqueChatIds = [...new Set(allUsers.map(u => u.chatId))]
+      .filter(id => !isAdmin(id)); // adminlarga o'z xabari qaytarilmaydi
     let sent = 0;
     let failed = 0;
 
