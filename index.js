@@ -55,6 +55,25 @@ function saveStudents() {
   fs.writeFileSync(STUDENTS_FILE, JSON.stringify(students, null, 2));
 }
 
+// ==== Botni ishga tushirgan BARCHA foydalanuvchilar (ro'yxatdan o'tmagan bo'lsa ham) ====
+const USERS_FILE = './users.json';
+let allUsers = [];
+if (fs.existsSync(USERS_FILE)) {
+  try { allUsers = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch (e) { allUsers = []; }
+}
+function saveUsers() {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(allUsers, null, 2));
+}
+function registerUser(chatId, lang) {
+  const existing = allUsers.find(u => u.chatId === chatId);
+  if (existing) {
+    if (lang) existing.lang = lang;
+  } else {
+    allUsers.push({ chatId, lang: lang || 'uz', firstSeen: new Date().toISOString() });
+  }
+  saveUsers();
+}
+
 // ==== Xotiradagi holatlar ====
 const userLang = {};
 const regState = {};
@@ -216,6 +235,7 @@ function subscribePrompt(chatId) {
 bot.start(async (ctx) => {
   const chatId = ctx.chat.id;
   delete regState[chatId];
+  registerUser(chatId, userLang[chatId]); // botni ishga tushirgan hamma shu yerda qayd etiladi
 
   const subscribed = await isSubscribed(ctx, chatId);
   if (!subscribed) {
@@ -257,6 +277,7 @@ bot.action('check_sub', async (ctx) => {
 bot.action(/lang:(uz|ru)/, (ctx) => {
   const chatId = ctx.chat.id;
   userLang[chatId] = ctx.match[1];
+  registerUser(chatId, ctx.match[1]);
   ctx.answerCbQuery();
   ctx.reply(t(chatId).mainMenuTitle, mainMenuKeyboard(chatId));
 });
@@ -509,7 +530,7 @@ bot.action('admin:broadcast', (ctx) => {
   ctx.answerCbQuery();
   adminState[chatId] = { mode: 'broadcast' };
   ctx.reply(
-    "📢 Barcha o'quvchilarga yuboriladigan xabar matnini yozing.\n\n" +
+    "📢 Botdan foydalangan barcha foydalanuvchilarga yuboriladigan xabar matnini yozing.\n\n" +
     "Bekor qilish uchun /cancel yozing."
   );
 });
@@ -534,7 +555,7 @@ bot.on('text', async (ctx) => {
   if (isAdmin(chatId) && adminState[chatId] && adminState[chatId].mode === 'broadcast') {
     delete adminState[chatId];
 
-    const uniqueChatIds = [...new Set(students.map(s => s.chatId))];
+    const uniqueChatIds = [...new Set(allUsers.map(u => u.chatId))];
     let sent = 0;
     let failed = 0;
 
@@ -701,10 +722,9 @@ async function sendDailyWords() {
   // 20 tadan so'zlar ro'yxatidan tasodifiy 10 tasini olamiz
   const shuffled = [...dailyWords].sort(() => 0.5 - Math.random());
   const selected = shuffled.slice(0, 10);
-  const uniqueStudents = [...new Map(students.map(s => [s.chatId, s])).values()];
 
-  for (const s of uniqueStudents) {
-    const lang = s.lang || 'uz';
+  for (const u of allUsers) {
+    const lang = u.lang || 'uz';
     const title = lang === 'ru' ? '📩 <b>10 слов дня</b>\n' : "📩 <b>Kunning 10 ta so'zi</b>\n";
     const lines = selected
       .map((w, i) => `${i + 1}. ${w.tr} — ${lang === 'ru' ? w.ru : w.uz}`)
@@ -712,7 +732,7 @@ async function sendDailyWords() {
     const msg = `${title}\n${lines}`;
 
     try {
-      await bot.telegram.sendMessage(s.chatId, msg, { parse_mode: 'HTML' });
+      await bot.telegram.sendMessage(u.chatId, msg, { parse_mode: 'HTML' });
     } catch (e) {
       // Foydalanuvchi botni bloklagan bo'lishi mumkin — o'tkazib yuboramiz
     }
