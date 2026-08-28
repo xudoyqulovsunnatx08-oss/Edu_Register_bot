@@ -5,7 +5,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
-const ADMIN_PHONE = '+998 88 176 266 66';
+const ADMIN_PHONE = '+998 88 176 26 66';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
