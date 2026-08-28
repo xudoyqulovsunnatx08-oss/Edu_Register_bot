@@ -6,7 +6,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
 const ADMIN_PHONE = '+998 88 176 26 66';
-const CHANNEL_USERNAME = '@Turk_akademisi';
+const CHANNEL_USERNAME = '@Turk_akademisi'.trim();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
@@ -322,6 +322,33 @@ bot.action(/level:(A1|A2|B1|B2)/, (ctx) => {
 function isAdmin(chatId) {
   return ADMIN_IDS.includes(String(chatId));
 }
+
+// ==== Diagnostika buyrug'i (faqat admin) — kanal tekshiruvi nima xato berayotganini ko'rsatadi ====
+bot.command('checksub', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  ctx.reply(`Tekshirilayotgan kanal: ${CHANNEL_USERNAME}\nSizning chat ID: ${chatId}`);
+
+  try {
+    const chat = await ctx.telegram.getChat(CHANNEL_USERNAME);
+    ctx.reply(`✅ Kanal topildi:\nID: ${chat.id}\nNomi: ${chat.title}\nUsername: @${chat.username || 'yo\'q'}`);
+  } catch (e) {
+    ctx.reply(`❌ Kanal topilmadi.\nXato: ${e.message}`);
+    return;
+  }
+
+  try {
+    const member = await ctx.telegram.getChatMember(CHANNEL_USERNAME, chatId);
+    ctx.reply(`✅ A'zolik holati: ${member.status}\n\n(agar "left" yoki "kicked" bo'lsa — a'zo emassiz deb hisoblanadi)`);
+  } catch (e) {
+    ctx.reply(
+      `❌ A'zolikni tekshirishda XATO:\n${e.message}\n\n` +
+      `Bu odatda bot kanalga ADMIN qilib qo'shilmagani uchun bo'ladi. ` +
+      `Kanal → Administrators → bot username'ini qidirib toping va qo'shing.`
+    );
+  }
+});
 
 bot.command('admin', (ctx) => {
   const chatId = ctx.chat.id;
