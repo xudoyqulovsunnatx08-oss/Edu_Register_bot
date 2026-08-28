@@ -347,6 +347,35 @@ function isAdmin(chatId) {
 }
 
 // ==== Diagnostika buyrug'i (faqat admin) — kanal tekshiruvi nima xato berayotganini ko'rsatadi ====
+// ==== Takrorlangan yozuvlarni tozalash (faqat admin) ====
+bot.command('dedupe', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  const seenPhones = new Set();
+  const seenNames = new Set();
+  const cleaned = [];
+  let removed = 0;
+
+  for (const s of students) {
+    const normPhone = normalizePhone(s.phone);
+    const normName = normalizeName(s.name);
+    if (seenPhones.has(normPhone) || seenNames.has(normName)) {
+      removed++;
+      continue;
+    }
+    seenPhones.add(normPhone);
+    seenNames.add(normName);
+    cleaned.push(s);
+  }
+
+  students.length = 0;
+  students.push(...cleaned);
+  saveStudents();
+
+  ctx.reply(`✅ Tozalandi. ${removed} ta takroriy yozuv o'chirildi.\nQoldi: ${students.length} ta.`);
+});
+
 bot.command('checksub', async (ctx) => {
   const chatId = ctx.chat.id;
   if (!isAdmin(chatId)) return;
@@ -582,11 +611,54 @@ bot.on('contact', (ctx) => {
   finishRegistration(ctx, chatId, state);
 });
 
+function normalizePhone(phone) {
+  return (phone || '').replace(/\D/g, ''); // faqat raqamlarni qoldiradi
+}
+
+function normalizeName(name) {
+  return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function findExistingStudent(name, phone) {
+  const normPhone = normalizePhone(phone);
+  const normName = normalizeName(name);
+  return students.find(
+    s => normalizePhone(s.phone) === normPhone || normalizeName(s.name) === normName
+  );
+}
+
+const alreadyRegisteredText = {
+  uz: (s) =>
+    "⚠️ <b>Siz avval ro'yxatdan o'tgansiz!</b>\n\n" +
+    `👤 Ism: ${s.name}\n` +
+    `📞 Telefon: ${s.phone}\n` +
+    `📚 Daraja: ${s.level}\n` +
+    `🏫 Shakl: ${s.format === 'online' ? 'Onlayn' : 'Oflayn'}\n\n` +
+    "Agar ma'lumotlaringizni o'zgartirish kerak bo'lsa, admin bilan bog'laning.",
+  ru: (s) =>
+    "⚠️ <b>Вы уже зарегистрированы!</b>\n\n" +
+    `👤 Имя: ${s.name}\n` +
+    `📞 Телефон: ${s.phone}\n` +
+    `📚 Уровень: ${s.level}\n` +
+    `🏫 Формат: ${s.format === 'online' ? 'Онлайн' : 'Офлайн'}\n\n` +
+    "Если нужно изменить данные, свяжитесь с администратором.",
+};
+
 function finishRegistration(ctx, chatId, state) {
   const tt = t(chatId);
+  const lang = userLang[chatId] || 'uz';
+
+  const existing = findExistingStudent(state.data.name, state.data.phone);
+  if (existing) {
+    delete regState[chatId];
+    const msg = alreadyRegisteredText[lang](existing);
+    ctx.replyWithHTML(msg, mainMenuKeyboard(chatId));
+    return;
+  }
+
   const student = {
     chatId,
-    lang: userLang[chatId] || 'uz',
+    lang,
     format: state.data.format,
     level: state.data.level,
     name: state.data.name,
