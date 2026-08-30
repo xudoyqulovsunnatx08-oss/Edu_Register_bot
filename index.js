@@ -9,6 +9,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
 const ADMIN_PHONE = '+998 88 176 26 66';
 const CHANNEL_USERNAME = '@Turk_akademisi'.trim();
+const BOT_USERNAME = 'Edu_Register_bot'; // @ belgisisiz, aynan bot username
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
@@ -64,14 +65,48 @@ if (fs.existsSync(USERS_FILE)) {
 function saveUsers() {
   fs.writeFileSync(USERS_FILE, JSON.stringify(allUsers, null, 2));
 }
-function registerUser(chatId, lang) {
+function registerUser(chatId, lang, referredBy) {
   const existing = allUsers.find(u => u.chatId === chatId);
   if (existing) {
     if (lang) existing.lang = lang;
+    // referredBy faqat birinchi marta o'rnatiladi, keyin o'zgartirilmaydi
+    if (referredBy && !existing.referredBy && referredBy !== chatId) {
+      existing.referredBy = referredBy;
+    }
   } else {
-    allUsers.push({ chatId, lang: lang || 'uz', firstSeen: new Date().toISOString() });
+    allUsers.push({
+      chatId,
+      lang: lang || 'uz',
+      referredBy: referredBy && referredBy !== chatId ? referredBy : null,
+      firstSeen: new Date().toISOString(),
+    });
   }
   saveUsers();
+}
+
+function getReferralCount(chatId) {
+  // Chegirma faqat TO'LIQ ro'yxatdan o'tgan do'stlar uchun hisoblanadi
+  return students.filter(s => s.referredBy === chatId).length;
+}
+
+const DISCOUNT_TIERS = [
+  { count: 60, percent: 15 },
+  { count: 40, percent: 10 },
+  { count: 20, percent: 5 },
+];
+
+function getDiscountPercent(count) {
+  const tier = DISCOUNT_TIERS.find(t => count >= t.count);
+  return tier ? tier.percent : 0;
+}
+
+function getNextTier(count) {
+  const remaining = [...DISCOUNT_TIERS].reverse().find(t => count < t.count);
+  return remaining || null; // null bo'lsa — eng yuqori darajaga yetgan
+}
+
+function getReferralLink(chatId) {
+  return `https://t.me/${BOT_USERNAME}?start=ref_${chatId}`;
 }
 
 // ==== Xotiradagi holatlar ====
@@ -93,6 +128,7 @@ const texts = {
     menuInfo: "ℹ️ Ma'lumot",
     menuContact: "📞 Aloqa",
     menuPricing: "💰 Narxlar",
+    menuReferral: "🎁 Do'stlarni taklif qilish",
     chooseFormat: "O'qish shaklini tanlang:",
     online: "💻 Onlayn",
     offline: "🏫 Oflayn",
@@ -125,6 +161,35 @@ const texts = {
       "🏫 <b>Oflayn:</b> 300 000 so'm/oy\n" +
       "  Haftada 4 kun dars\n\n" +
       `Batafsil ma'lumot uchun admin bilan bog'laning: ${ADMIN_PHONE}`,
+    referralTitle: "🎁 <b>Do'stlarni taklif qilish</b>",
+    referralDesc: (link, count) => {
+      const discount = getDiscountPercent(count);
+      const next = getNextTier(count);
+      const discountLine = discount > 0
+        ? `🏷 Sizning hozirgi chegirmangiz: <b>${discount}%</b>\n`
+        : '';
+      const nextLine = next
+        ? `📈 Yana ${next.count - count} ta do'st taklif qilsangiz — <b>${next.percent}%</b> chegirma olasiz\n`
+        : '🏆 Siz eng yuqori chegirma darajasidasiz!\n';
+      return (
+        `🎁 <b>Do'stlarni taklif qilish</b>\n\n` +
+        `Do'stlaringizni quyidagi shaxsiy havolangiz orqali taklif qiling. ` +
+        `Ular ro'yxatdan o'tishi bilan sizga xabar boradi!\n\n` +
+        `🔗 <code>${link}</code>\n\n` +
+        `👥 Siz orqali ro'yxatdan o'tganlar: <b>${count} ta</b>\n` +
+        discountLine +
+        nextLine +
+        `\n🏷 Chegirma darajalari:\n` +
+        `  20 ta do'st — 5%\n` +
+        `  40 ta do'st — 10%\n` +
+        `  60 ta do'st — 15%\n\n` +
+        `Chegirmani olish uchun admin bilan bog'laning: ${ADMIN_PHONE}`
+      );
+    },
+    referralNotify: (name) =>
+      `🎉 Sizning havolangiz orqali <b>${name}</b> ro'yxatdan o'tdi! Rahmat.`,
+    referralTierUp: (percent) =>
+      `🏆 Tabriklaymiz! Siz endi <b>${percent}%</b> chegirma darajasiga yetdingiz!`,
   },
   ru: {
     intro:
@@ -139,6 +204,7 @@ const texts = {
     menuInfo: "ℹ️ Информация",
     menuContact: "📞 Контакты",
     menuPricing: "💰 Цены",
+    menuReferral: "🎁 Пригласить друзей",
     chooseFormat: "Выберите формат обучения:",
     online: "💻 Онлайн",
     offline: "🏫 Офлайн",
@@ -171,6 +237,35 @@ const texts = {
       "🏫 <b>Офлайн:</b> 300 000 сум/мес\n" +
       "  4 занятия в неделю\n\n" +
       `Подробнее у администратора: ${ADMIN_PHONE}`,
+    referralTitle: "🎁 <b>Пригласить друзей</b>",
+    referralDesc: (link, count) => {
+      const discount = getDiscountPercent(count);
+      const next = getNextTier(count);
+      const discountLine = discount > 0
+        ? `🏷 Ваша текущая скидка: <b>${discount}%</b>\n`
+        : '';
+      const nextLine = next
+        ? `📈 Ещё ${next.count - count} друзей — и вы получите <b>${next.percent}%</b> скидку\n`
+        : '🏆 Вы достигли максимального уровня скидки!\n';
+      return (
+        `🎁 <b>Пригласить друзей</b>\n\n` +
+        `Приглашайте друзей по вашей персональной ссылке. ` +
+        `Как только они зарегистрируются — вам придёт уведомление!\n\n` +
+        `🔗 <code>${link}</code>\n\n` +
+        `👥 Зарегистрировано по вашей ссылке: <b>${count}</b>\n` +
+        discountLine +
+        nextLine +
+        `\n🏷 Уровни скидок:\n` +
+        `  20 друзей — 5%\n` +
+        `  40 друзей — 10%\n` +
+        `  60 друзей — 15%\n\n` +
+        `Для получения скидки свяжитесь с администратором: ${ADMIN_PHONE}`
+      );
+    },
+    referralNotify: (name) =>
+      `🎉 По вашей ссылке зарегистрировался(-ась) <b>${name}</b>! Спасибо.`,
+    referralTierUp: (percent) =>
+      `🏆 Поздравляем! Вы достигли уровня скидки <b>${percent}%</b>!`,
   },
 };
 
@@ -182,7 +277,7 @@ function mainMenuKeyboard(chatId) {
   const tt = t(chatId);
   return Markup.keyboard([
     [tt.menuRegister],
-    [tt.menuPricing],
+    [tt.menuPricing, tt.menuReferral],
     [tt.menuInfo, tt.menuContact],
   ]).resize();
 }
@@ -235,7 +330,16 @@ function subscribePrompt(chatId) {
 bot.start(async (ctx) => {
   const chatId = ctx.chat.id;
   delete regState[chatId];
-  registerUser(chatId, userLang[chatId]); // botni ishga tushirgan hamma shu yerda qayd etiladi
+
+  // Referal havolasi orqali kirgan bo'lsa: /start?ref_123456789
+  let referredBy = null;
+  const payload = ctx.startPayload; // "ref_123456789"
+  if (payload && payload.startsWith('ref_')) {
+    const refId = parseInt(payload.replace('ref_', ''), 10);
+    if (!isNaN(refId)) referredBy = refId;
+  }
+
+  registerUser(chatId, userLang[chatId], referredBy); // botni ishga tushirgan hamma shu yerda qayd etiladi
 
   const subscribed = await isSubscribed(ctx, chatId);
   if (!subscribed) {
@@ -328,6 +432,13 @@ bot.hears([texts.uz.menuContact, texts.ru.menuContact], (ctx) => {
 
 bot.hears([texts.uz.menuPricing, texts.ru.menuPricing], (ctx) => {
   ctx.replyWithHTML(t(ctx.chat.id).pricingText);
+});
+
+bot.hears([texts.uz.menuReferral, texts.ru.menuReferral], (ctx) => {
+  const chatId = ctx.chat.id;
+  const link = getReferralLink(chatId);
+  const count = getReferralCount(chatId);
+  ctx.replyWithHTML(t(chatId).referralDesc(link, count));
 });
 
 // ==== Format (onlayn/oflayn) tanlash ====
@@ -479,6 +590,25 @@ bot.action('admin:stats', (ctx) => {
     .map(lvl => `${lvl}: ${students.filter(s => s.level === lvl).length} ta`)
     .join('\n');
 
+  // Eng ko'p taklif qilgan o'quvchilar (top 5)
+  const referralCounts = {};
+  students.forEach(s => {
+    if (s.referredBy) {
+      referralCounts[s.referredBy] = (referralCounts[s.referredBy] || 0) + 1;
+    }
+  });
+  const topReferrers = Object.entries(referralCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([refChatId, count]) => {
+      const refStudent = students.find(s => s.chatId === parseInt(refChatId, 10));
+      const refName = refStudent ? refStudent.name : `ID: ${refChatId}`;
+      return `${refName} — ${count} ta`;
+    });
+  const referralSection = topReferrers.length
+    ? `\n\n🎁 Eng faol taklif qiluvchilar:\n${topReferrers.join('\n')}`
+    : '';
+
   const msg =
     `📊 <b>Statistika</b>\n\n` +
     `👥 Jami: ${total} ta\n\n` +
@@ -486,7 +616,8 @@ bot.action('admin:stats', (ctx) => {
     `🏫 Oflayn: ${offline} ta\n\n` +
     `🇺🇿 O'zbek tilida: ${uz} ta\n` +
     `🇷🇺 Rus tilida: ${ru} ta\n\n` +
-    `📚 Darajalar bo'yicha:\n${levelCounts}`;
+    `📚 Darajalar bo'yicha:\n${levelCounts}` +
+    referralSection;
 
   ctx.replyWithHTML(msg);
 });
@@ -502,16 +633,20 @@ bot.action('admin:export', async (ctx) => {
     return;
   }
 
-  const rows = students.map((s, i) => ({
-    '№': i + 1,
-    'Ism familiya': s.name,
-    'Yosh': s.age,
-    'Telefon': s.phone,
-    'Format': s.format === 'online' ? 'Onlayn' : 'Oflayn',
-    'Daraja': s.level,
-    'Til': s.lang === 'ru' ? 'Rus' : "O'zbek",
-    'Ro\'yxatdan o\'tgan sana': new Date(s.date).toLocaleString('uz-UZ'),
-  }));
+  const rows = students.map((s, i) => {
+    const referrer = s.referredBy ? students.find(st => st.chatId === s.referredBy) : null;
+    return {
+      '№': i + 1,
+      'Ism familiya': s.name,
+      'Yosh': s.age,
+      'Telefon': s.phone,
+      'Format': s.format === 'online' ? 'Onlayn' : 'Oflayn',
+      'Daraja': s.level,
+      'Til': s.lang === 'ru' ? 'Rus' : "O'zbek",
+      'Kim taklif qildi': referrer ? referrer.name : '',
+      'Ro\'yxatdan o\'tgan sana': new Date(s.date).toLocaleString('uz-UZ'),
+    };
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
@@ -678,6 +813,9 @@ function finishRegistration(ctx, chatId, state) {
     return;
   }
 
+  const userRecord = allUsers.find(u => u.chatId === chatId);
+  const referredBy = userRecord ? userRecord.referredBy : null;
+
   const student = {
     chatId,
     lang,
@@ -686,6 +824,7 @@ function finishRegistration(ctx, chatId, state) {
     name: state.data.name,
     age: state.data.age,
     phone: state.data.phone,
+    referredBy: referredBy || null,
     date: new Date().toISOString(),
   };
   students.push(student);
@@ -693,6 +832,28 @@ function finishRegistration(ctx, chatId, state) {
   delete regState[chatId];
 
   ctx.replyWithHTML(tt.regDone(student), mainMenuKeyboard(chatId));
+
+  // Taklif qiluvchiga xabar yuboramiz
+  if (referredBy) {
+    const referrerLang = (allUsers.find(u => u.chatId === referredBy) || {}).lang || 'uz';
+
+    // Yangi umumiy son (shu student qo'shilgandan keyingi holat)
+    const newCount = getReferralCount(referredBy);
+    const oldCount = newCount - 1;
+    const oldTierPercent = getDiscountPercent(oldCount);
+    const newTierPercent = getDiscountPercent(newCount);
+
+    bot.telegram
+      .sendMessage(referredBy, texts[referrerLang].referralNotify(student.name), { parse_mode: 'HTML' })
+      .catch(() => {}); // taklif qiluvchi botni bloklagan bo'lishi mumkin
+
+    // Agar yangi chegirma darajasiga o'tgan bo'lsa — alohida tabrik xabari
+    if (newTierPercent > oldTierPercent) {
+      bot.telegram
+        .sendMessage(referredBy, texts[referrerLang].referralTierUp(newTierPercent), { parse_mode: 'HTML' })
+        .catch(() => {});
+    }
+  }
 }
 
 // ==== Kunlik so'z eslatmasi ====
