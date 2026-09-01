@@ -491,8 +491,17 @@ function sendTestQuestion(ctx, chatId) {
   const q = questions[state.current];
   const header = t(chatId).testQuestionHeader(state.current + 1, questions.length);
 
-  const buttons = q.options.map((opt, idx) =>
-    [Markup.button.callback(opt, `testans:${idx}`)]
+  // Variantlar tartibini har safar aralashtiramiz — to'g'ri javob doim
+  // bitta joyda (masalan A) turmasligi uchun. callback_data original
+  // indeksni saqlaydi, shuning uchun tekshirish logikasi o'zgarmaydi.
+  const order = [0, 1, 2, 3];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+
+  const buttons = order.map(origIdx =>
+    [Markup.button.callback(q.options[origIdx], `testans:${origIdx}`)]
   );
 
   ctx.reply(`${header}\n\n${q.q}`, Markup.inlineKeyboard(buttons));
