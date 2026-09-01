@@ -2,3 +2,4 @@ node_modules
 .env
 students.json
 users.json
+test-results.json
