@@ -575,7 +575,8 @@ bot.action(/downloadcert:(\d+)/, async (ctx) => {
   const record = testResults[idx];
   const tt = t(chatId);
 
-  if (!record || record.chatId !== chatId) {
+  // Sertifikatni faqat egasi YOKI admin olishi mumkin
+  if (!record || (record.chatId !== chatId && !isAdmin(chatId))) {
     ctx.answerCbQuery();
     return;
   }
@@ -671,6 +672,7 @@ bot.command('admin', (ctx) => {
       [Markup.button.callback("📥 Excel yuklab olish", 'admin:export')],
       [Markup.button.callback("📢 Xabar yuborish", 'admin:broadcast')],
       [Markup.button.callback("🧪 Test natijalari", 'admin:testresults')],
+      [Markup.button.callback("🎓 Sertifikatlar", 'admin:certificates')],
     ])
   );
 });
@@ -830,6 +832,36 @@ bot.action('admin:testresults', (ctx) => {
   });
 
   ctx.replyWithHTML(msg);
+});
+
+// ==== Admin: Sertifikatlar ro'yxati (istalgan o'quvchiniki ham yuklab olish mumkin) ====
+bot.action('admin:certificates', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return ctx.answerCbQuery();
+  ctx.answerCbQuery();
+
+  const passedResults = testResults
+    .map((r, idx) => ({ ...r, idx }))
+    .filter(r => r.passed)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (passedResults.length === 0) {
+    ctx.reply("Hozircha hech kim sertifikat olmagan.");
+    return;
+  }
+
+  ctx.reply("🎓 Sertifikat olgan o'quvchilar (eng so'nggisi tepada). Yuklab olish uchun bosing:");
+
+  // Har safar ko'pi bilan 20 tasi (Telegram xabar hajmi cheklovi uchun)
+  const toShow = passedResults.slice(0, 20);
+  const buttons = toShow.map(r =>
+    [Markup.button.callback(`${r.name} — ${r.level} (${r.percent}%)`, `downloadcert:${r.idx}`)]
+  );
+
+  ctx.reply(
+    `Jami sertifikatlar: ${passedResults.length} ta${passedResults.length > 20 ? ' (oxirgi 20 tasi ko\'rsatilmoqda)' : ''}`,
+    Markup.inlineKeyboard(buttons)
+  );
 });
 // Bu handler ENG OXIRIDA turishi kerak, chunki u barcha matnlarni ushlaydi
 bot.on('text', async (ctx) => {
@@ -1070,33 +1102,33 @@ async function generateCertificate(name, level, percent) {
   <circle cx="70" cy="780" r="10" fill="#d4af37"/>
   <circle cx="1130" cy="780" r="10" fill="#d4af37"/>
 
-  <text x="600" y="150" font-family="Georgia, 'Times New Roman', serif" font-size="26" fill="#b8860b" text-anchor="middle" letter-spacing="4">TURK TILI O'QUV KURSI</text>
-  <text x="600" y="185" font-family="Georgia, serif" font-size="18" fill="#8a6d00" text-anchor="middle">@Turk_akademisi</text>
+  <text x="600" y="150" font-family="DejaVu Serif, Georgia, Times New Roman, serif" font-size="26" fill="#b8860b" text-anchor="middle" letter-spacing="4">TURK TILI O'QUV KURSI</text>
+  <text x="600" y="185" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#8a6d00" text-anchor="middle">@Turk_akademisi</text>
 
-  <text x="600" y="270" font-family="Georgia, serif" font-size="64" font-weight="bold" fill="#3a2a00" text-anchor="middle" letter-spacing="6">SERTIFIKAT</text>
+  <text x="600" y="270" font-family="DejaVu Serif, Georgia, serif" font-size="64" font-weight="bold" fill="#3a2a00" text-anchor="middle" letter-spacing="6">SERTIFIKAT</text>
 
   <line x1="400" y1="300" x2="800" y2="300" stroke="#d4af37" stroke-width="2"/>
 
-  <text x="600" y="360" font-family="Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Ushbu sertifikat quyidagi shaxsga topshiriladi:</text>
+  <text x="600" y="360" font-family="DejaVu Serif, Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Ushbu sertifikat quyidagi shaxsga topshiriladi:</text>
 
-  <text x="600" y="440" font-family="Georgia, serif" font-size="48" font-weight="bold" fill="#1a1a1a" text-anchor="middle">${escapedName}</text>
+  <text x="600" y="440" font-family="DejaVu Serif, Georgia, serif" font-size="48" font-weight="bold" fill="#1a1a1a" text-anchor="middle">${escapedName}</text>
 
-  <text x="600" y="500" font-family="Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
+  <text x="600" y="500" font-family="DejaVu Serif, Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
     Turk tili ${level} darajasi bo'yicha grammatika testidan
   </text>
-  <text x="600" y="535" font-family="Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
+  <text x="600" y="535" font-family="DejaVu Serif, Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
     <tspan font-weight="bold" fill="#2e7d32">${percent}%</tspan> natija bilan muvaffaqiyatli o'tganligini tasdiqlaydi.
   </text>
 
-  <text x="600" y="620" font-family="Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Sana: ${dateStr}</text>
+  <text x="600" y="620" font-family="DejaVu Serif, Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Sana: ${dateStr}</text>
 
   <line x1="230" y1="700" x2="480" y2="700" stroke="#999" stroke-width="1"/>
-  <text x="355" y="730" font-family="Georgia, serif" font-size="18" fill="#333" text-anchor="middle">O'qituvchi</text>
-  <text x="355" y="755" font-family="Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Sunnatillo hoca</text>
+  <text x="355" y="730" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#333" text-anchor="middle">O'qituvchi</text>
+  <text x="355" y="755" font-family="DejaVu Serif, Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Sunnatillo hoca</text>
 
   <line x1="720" y1="700" x2="970" y2="700" stroke="#999" stroke-width="1"/>
-  <text x="845" y="730" font-family="Georgia, serif" font-size="18" fill="#333" text-anchor="middle">Kurs rahbariyati</text>
-  <text x="845" y="755" font-family="Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Turk Akademisi</text>
+  <text x="845" y="730" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#333" text-anchor="middle">Kurs rahbariyati</text>
+  <text x="845" y="755" font-family="DejaVu Serif, Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Turk Akademisi</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
