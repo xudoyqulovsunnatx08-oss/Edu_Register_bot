@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
+const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const XLSX = require('xlsx');
 const cron = require('node-cron');
@@ -58,7 +59,14 @@ async function askAI(question, lang, attempt = 1) {
 }
 
 // ==== Ma'lumotlar bazasi (JSON fayl) ====
-const STUDENTS_FILE = './students.json';
+// ==== Doimiy ma'lumotlar papkasi ====
+// Railway'da bu papka "Volume" sifatida ulanadi (/app/data), shunda
+// deploy qilinganda ham fayllar o'chib ketmaydi. Lokal kompyuterda
+// oddiy "data" papkasi sifatida ishlaydi.
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
 let students = [];
 if (fs.existsSync(STUDENTS_FILE)) {
   try { students = JSON.parse(fs.readFileSync(STUDENTS_FILE, 'utf8')); } catch (e) { students = []; }
@@ -68,7 +76,7 @@ function saveStudents() {
 }
 
 // ==== Grammatika test natijalari ====
-const TEST_RESULTS_FILE = './test-results.json';
+const TEST_RESULTS_FILE = path.join(DATA_DIR, 'test-results.json');
 let testResults = [];
 if (fs.existsSync(TEST_RESULTS_FILE)) {
   try { testResults = JSON.parse(fs.readFileSync(TEST_RESULTS_FILE, 'utf8')); } catch (e) { testResults = []; }
@@ -78,7 +86,7 @@ function saveTestResults() {
 }
 
 // ==== Botni ishga tushirgan BARCHA foydalanuvchilar (ro'yxatdan o'tmagan bo'lsa ham) ====
-const USERS_FILE = './users.json';
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
 let allUsers = [];
 if (fs.existsSync(USERS_FILE)) {
   try { allUsers = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch (e) { allUsers = []; }
