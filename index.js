@@ -953,6 +953,25 @@ bot.action('admin:certificates', (ctx) => {
 });
 // Bu handler ENG OXIRIDA turishi kerak, chunki u barcha matnlarni ushlaydi
 bot.on('text', async (ctx) => {
+  try {
+    await handleTextMessage(ctx);
+  } catch (e) {
+    console.error("bot.on('text') kutilmagan xato:", e);
+    const chatId = ctx.chat.id;
+    const lang = userLang[chatId] || 'uz';
+    try {
+      await ctx.reply(
+        lang === 'ru'
+          ? 'Извините, произошла техническая ошибка. Попробуйте написать ещё раз.'
+          : "Kechirasiz, texnik xatolik yuz berdi. Iltimos, xabaringizni qayta yozib ko'ring."
+      );
+    } catch (e2) {
+      console.error('Xatoni xabar qilishda ham xato:', e2.message);
+    }
+  }
+});
+
+async function handleTextMessage(ctx) {
   const chatId = ctx.chat.id;
   const state = regState[chatId];
   const text = ctx.message.text;
@@ -1004,6 +1023,17 @@ bot.on('text', async (ctx) => {
       sendTestQuestion(ctx, chatId);
       return;
     }
+  }
+
+  // Agar test jarayonida (savolga javob berish bosqichida) bo'lsa, lekin
+  // tugma bosmasdan matn yozsa — jim qolmasdan eslatib qo'yamiz
+  if (tState && tState.step === 'quiz') {
+    ctx.reply(
+      userLang[chatId] === 'ru'
+        ? 'Пожалуйста, выберите ответ, нажав на одну из кнопок выше.'
+        : "Iltimos, yuqoridagi tugmalardan birini bosib javob bering."
+    );
+    return;
   }
 
   // Agar ro'yxatdan o'tish jarayonida bo'lmasa — bu erkin savol
@@ -1082,7 +1112,7 @@ bot.on('text', async (ctx) => {
     finishRegistration(ctx, chatId, state);
     return;
   }
-});
+}
 
 // ==== Telefon "Raqamni yuborish" tugmasi orqali kelsa ====
 bot.on('contact', (ctx) => {
@@ -1628,6 +1658,15 @@ async function sendDailyWords() {
   cron.schedule(cronTime, () => {
     sendDailyWords();
   }, { timezone: 'Asia/Tashkent' });
+});
+
+// ==== Global xatolarni ushlash — bot hech qachon "jim qolib" ishlamay
+// qolmasligi uchun oxirgi xavfsizlik chizig'i ====
+bot.catch((err, ctx) => {
+  console.error('Global bot xatosi:', err);
+  try {
+    ctx.reply("Kechirasiz, texnik xatolik yuz berdi. Iltimos, qayta urinib ko'ring.");
+  } catch (e) {}
 });
 
 bot.launch();
