@@ -746,6 +746,22 @@ bot.command('reply', (ctx) => {
     .catch((e) => ctx.reply(`❌ Xatolik: ${e.message}`));
 });
 
+// ==== Diagnostika: har kim /whoami yozsa, o'z holatini ko'rishi mumkin ====
+bot.command('whoami', (ctx) => {
+  const chatId = ctx.chat.id;
+  const admin = isAdmin(chatId);
+  const lang = userLang[chatId] || '(hali tanlanmagan)';
+  const chatType = ctx.chat.type;
+
+  ctx.reply(
+    `🆔 Sizning chat ID: ${chatId}\n` +
+    `👤 Admin sifatida tanilyaptimi: ${admin ? 'HA' : "yo'q"}\n` +
+    `🌐 Til: ${lang}\n` +
+    `💬 Chat turi: ${chatType}\n` +
+    `📶 Bot holati: ${botSettings.isOnline ? 'Online' : 'Offline'}`
+  );
+});
+
 bot.command('admin', (ctx) => {
   const chatId = ctx.chat.id;
   if (!isAdmin(chatId)) {
