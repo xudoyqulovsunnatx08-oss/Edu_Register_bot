@@ -5,7 +5,22 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const XLSX = require('xlsx');
 const cron = require('node-cron');
-const sharp = require('sharp');
+// ==== Canvas kutubxonasini "dangasa" (lazy) yuklaymiz ====
+// Bu — mahalliy kompyuterda (masalan Windows'da, agar 'canvas' paketi
+// to'liq kompilyatsiya bo'lmagan bo'lsa) botning boshqa barcha qismlari
+// (menyu, ro'yxatdan o'tish, test) muammosiz ishlashi uchun kerak.
+// 'canvas' faqat sertifikat generatsiya qilinganda haqiqatan chaqiriladi —
+// bu esa asosan Railway serverida (Linux) sodir bo'ladi.
+let _canvasLib = null;
+function getCanvasLib() {
+  if (!_canvasLib) {
+    _canvasLib = require('canvas');
+    const { registerFont } = _canvasLib;
+    registerFont(path.join(__dirname, 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSerif.ttf'), { family: 'CertFont', weight: 'normal' });
+    registerFont(path.join(__dirname, 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSerif-Bold.ttf'), { family: 'CertFont', weight: 'bold' });
+  }
+  return _canvasLib;
+}
 const quizData = require('./quizData');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -28,17 +43,22 @@ bot.use((ctx, next) => {
 
 const AI_SYSTEM_PROMPT = {
   uz:
-    "Siz 'Turk tili o'quv kursi' Telegram botining aqlli yordamchisisiz. " +
-    "O'quvchilarning kurs, darslar, darajalar (A1-B2), onlayn/oflayn shakllar haqidagi savollariga " +
-    "qisqa, aniq va do'stona javob bering. Agar savol kursga umuman aloqador bo'lmasa yoki " +
-    "aniq javob bera olmasangiz, buni halol ayting va admin bilan bog'lanishni tavsiya eting: " +
-    `${ADMIN_PHONE}. Javobni faqat o'zbek tilida, 2-4 gapda bering.`,
+    "Sen Sunnatillo hocasan — 'Turk Akademisi' Turk tili o'quv kursining o'qituvchisisan. " +
+    "O'quvchilar senga savol yozganda, xuddi sen shaxsan javob berayotgandek, birinchi shaxsda " +
+    "('men', 'mening tajribamda' kabi) so'zla. Ohangingiz — tajribali, mehribon va sabrli o'qituvchining " +
+    "ohangi bo'lsin. Kurs, darslar, darajalar (A1-B2), onlayn/oflayn shakllar, Turk tili grammatikasi " +
+    "haqidagi savollarga qisqa, aniq va samimiy javob ber. Agar savol kursga umuman aloqador bo'lmasa " +
+    "yoki aniq javob bera olmasang, buni halol ayt va qo'shimcha ma'lumot uchun quyidagi raqamga " +
+    `qo'ng'iroq qilishni tavsiya et: ${ADMIN_PHONE}. Javobni faqat o'zbek tilida, 2-4 gapda ber. ` +
+    "O'zingni 'bot' yoki 'yordamchi' deb atama — sen o'qituvchining o'zisan.",
   ru:
-    "Вы умный помощник Telegram-бота 'Курсы турецкого языка'. " +
-    "Отвечайте на вопросы учеников о курсе, занятиях, уровнях (A1-B2), онлайн/офлайн формате " +
-    "кратко, точно и дружелюбно. Если вопрос не относится к курсу или вы не знаете точного ответа, " +
-    `честно скажите об этом и посоветуйте связаться с админом: ${ADMIN_PHONE}. ` +
-    "Отвечайте только на русском языке, 2-4 предложениями.",
+    "Ты — Суннатилло-ходжа, преподаватель курсов турецкого языка 'Turk Akademisi'. " +
+    "Когда ученики пишут тебе вопрос, отвечай от первого лица ('я', 'в моём опыте'), как будто " +
+    "отвечаешь лично сам. Тон — опытного, доброго и терпеливого учителя. Отвечай кратко, точно и " +
+    "дружелюбно на вопросы о курсе, занятиях, уровнях (A1-B2), онлайн/офлайн формате, грамматике " +
+    "турецкого языка. Если вопрос не относится к курсу или ты не знаешь точного ответа, честно скажи " +
+    `об этом и посоветуй позвонить по номеру: ${ADMIN_PHONE}. ` +
+    "Отвечай только на русском языке, 2-4 предложениями. Никогда не называй себя ботом или помощником — ты сам учитель.",
 };
 
 async function askAI(question, lang, attempt = 1) {
@@ -65,6 +85,16 @@ async function askAI(question, lang, attempt = 1) {
 // oddiy "data" papkasi sifatida ishlaydi.
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// ==== Admin online/offline holati ====
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+let botSettings = { isOnline: true };
+if (fs.existsSync(SETTINGS_FILE)) {
+  try { botSettings = { ...botSettings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; } catch (e) {}
+}
+function saveSettings() {
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(botSettings, null, 2));
+}
 
 const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
 let students = [];
@@ -666,6 +696,56 @@ bot.command('dedupe', (ctx) => {
   ctx.reply(`✅ Tozalandi. ${removed} ta takroriy yozuv o'chirildi.\nQoldi: ${students.length} ta.`);
 });
 
+// ==== Online/Offline holatini boshqarish ====
+bot.command('offline', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return;
+  botSettings.isOnline = false;
+  saveSettings();
+  ctx.reply(
+    "🌙 Offline rejim yoqildi.\n\n" +
+    "Endi o'quvchilar yozgan xabarlarga bot avtomatik ravishda sizning nomingizdan " +
+    "(o'qituvchi sifatida) javob beradi."
+  );
+});
+
+bot.command('online', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return;
+  botSettings.isOnline = true;
+  saveSettings();
+  ctx.reply(
+    "☀️ Online rejim yoqildi.\n\n" +
+    "Endi o'quvchilar xabarlari sizga yetkaziladi, avtomatik javob berilmaydi. " +
+    "Javob berish uchun: /reply <chat_id> <matn>"
+  );
+});
+
+// ==== Admin shaxsan javob yozadigan buyruq ====
+bot.command('reply', (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  const text = ctx.message.text.replace('/reply', '').trim();
+  const spaceIdx = text.indexOf(' ');
+  if (spaceIdx === -1) {
+    ctx.reply("Foydalanish: /reply <chat_id> <matn>\nMasalan: /reply 123456789 Salom, savolingizga javoban...");
+    return;
+  }
+
+  const targetId = parseInt(text.slice(0, spaceIdx), 10);
+  const message = text.slice(spaceIdx + 1).trim();
+
+  if (isNaN(targetId) || !message) {
+    ctx.reply("Foydalanish: /reply <chat_id> <matn>");
+    return;
+  }
+
+  bot.telegram.sendMessage(targetId, `👨‍🏫 <b>O'qituvchidan javob:</b>\n\n${message}`, { parse_mode: 'HTML' })
+    .then(() => ctx.reply("✅ Yuborildi."))
+    .catch((e) => ctx.reply(`❌ Xatolik: ${e.message}`));
+});
+
 bot.command('admin', (ctx) => {
   const chatId = ctx.chat.id;
   if (!isAdmin(chatId)) {
@@ -926,19 +1006,42 @@ bot.on('text', async (ctx) => {
     }
   }
 
-  // Agar ro'yxatdan o'tish jarayonida bo'lmasa — bu erkin savol, AI javob beradi
+  // Agar ro'yxatdan o'tish jarayonida bo'lmasa — bu erkin savol
   if (!state) {
     if (!userLang[chatId]) return; // til hali tanlanmagan bo'lsa, e'tiborsiz qoldiramiz
-    try {
-      await ctx.sendChatAction('typing');
-      const answer = await askAI(text, userLang[chatId]);
-      ctx.reply(answer);
-    } catch (e) {
-      console.error('AI xatosi:', e.message);
+    if (isAdmin(chatId)) return; // admin o'zi yozsa, bu yerga kirmaydi
+
+    if (!botSettings.isOnline) {
+      // OFFLINE rejim — AI o'qituvchi nomidan avtomatik javob beradi
+      try {
+        await ctx.sendChatAction('typing');
+        const answer = await askAI(text, userLang[chatId]);
+        ctx.reply(answer);
+      } catch (e) {
+        console.error('AI xatosi:', e.message);
+        ctx.reply(
+          userLang[chatId] === 'ru'
+            ? 'Извините, произошла ошибка. Попробуйте позже или свяжитесь с админом.'
+            : "Kechirasiz, xatolik yuz berdi. Keyinroq urinib ko'ring yoki admin bilan bog'laning."
+        );
+      }
+    } else {
+      // ONLINE rejim — xabar adminlarga yuboriladi, avtomatik javob berilmaydi
+      const senderName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ') || ctx.from.username || 'Foydalanuvchi';
+      const forwardMsg =
+        `📩 <b>Yangi xabar</b>\n` +
+        `👤 ${senderName} (ID: <code>${chatId}</code>)\n\n` +
+        `${text}\n\n` +
+        `Javob berish: <code>/reply ${chatId} matn</code>`;
+
+      ADMIN_IDS.forEach(adminId => {
+        bot.telegram.sendMessage(adminId, forwardMsg, { parse_mode: 'HTML' }).catch(() => {});
+      });
+
       ctx.reply(
         userLang[chatId] === 'ru'
-          ? 'Извините, произошла ошибка. Попробуйте позже или свяжитесь с админом.'
-          : "Kechirasiz, xatolik yuz berdi. Keyinroq urinib ko'ring yoki admin bilan bog'laning."
+          ? 'Ваше сообщение передано учителю. Он ответит вам в ближайшее время.'
+          : "Xabaringiz o'qituvchiga yetkazildi. Tez orada javob beradi."
       );
     }
     return;
@@ -1083,63 +1186,120 @@ function finishRegistration(ctx, chatId, state) {
 
 // ==== Sertifikat generatsiyasi (SVG -> PNG) ====
 async function generateCertificate(name, level, percent) {
+  const { createCanvas } = getCanvasLib();
   const dateStr = new Date().toLocaleDateString('uz-UZ');
-  const escapedName = String(name).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const width = 1200, height = 850;
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
 
-  const svg = `
-<svg width="1200" height="850" viewBox="0 0 1200 850" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#fdf6e3"/>
-      <stop offset="100%" stop-color="#f5ead0"/>
-    </linearGradient>
-    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#b8860b"/>
-      <stop offset="50%" stop-color="#d4af37"/>
-      <stop offset="100%" stop-color="#b8860b"/>
-    </linearGradient>
-  </defs>
+  // Fon gradienti
+  const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+  bgGrad.addColorStop(0, '#fdf6e3');
+  bgGrad.addColorStop(1, '#f5ead0');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, width, height);
 
-  <rect width="1200" height="850" fill="url(#bg)"/>
-  <rect x="30" y="30" width="1140" height="790" fill="none" stroke="url(#gold)" stroke-width="6"/>
-  <rect x="50" y="50" width="1100" height="750" fill="none" stroke="#b8860b" stroke-width="2"/>
+  // Tashqi oltin ramka
+  const goldGrad = ctx.createLinearGradient(0, 0, width, 0);
+  goldGrad.addColorStop(0, '#b8860b');
+  goldGrad.addColorStop(0.5, '#d4af37');
+  goldGrad.addColorStop(1, '#b8860b');
+  ctx.strokeStyle = goldGrad;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(30, 30, width - 60, height - 60);
 
-  <!-- Burchak bezaklari -->
-  <circle cx="70" cy="70" r="10" fill="#d4af37"/>
-  <circle cx="1130" cy="70" r="10" fill="#d4af37"/>
-  <circle cx="70" cy="780" r="10" fill="#d4af37"/>
-  <circle cx="1130" cy="780" r="10" fill="#d4af37"/>
+  ctx.strokeStyle = '#b8860b';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(50, 50, width - 100, height - 100);
 
-  <text x="600" y="150" font-family="DejaVu Serif, Georgia, Times New Roman, serif" font-size="26" fill="#b8860b" text-anchor="middle" letter-spacing="4">TURK TILI O'QUV KURSI</text>
-  <text x="600" y="185" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#8a6d00" text-anchor="middle">@Turk_akademisi</text>
+  // Burchak bezaklari
+  ctx.fillStyle = '#d4af37';
+  [[70, 70], [1130, 70], [70, 780], [1130, 780]].forEach(([x, y]) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 10, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
-  <text x="600" y="270" font-family="DejaVu Serif, Georgia, serif" font-size="64" font-weight="bold" fill="#3a2a00" text-anchor="middle" letter-spacing="6">SERTIFIKAT</text>
+  ctx.textAlign = 'center';
 
-  <line x1="400" y1="300" x2="800" y2="300" stroke="#d4af37" stroke-width="2"/>
+  ctx.fillStyle = '#b8860b';
+  ctx.font = '26px CertFont';
+  ctx.fillText("TURK TILI O'QUV KURSI", 600, 150);
 
-  <text x="600" y="360" font-family="DejaVu Serif, Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Ushbu sertifikat quyidagi shaxsga topshiriladi:</text>
+  ctx.fillStyle = '#8a6d00';
+  ctx.font = '18px CertFont';
+  ctx.fillText('@Turk_akademisi', 600, 185);
 
-  <text x="600" y="440" font-family="DejaVu Serif, Georgia, serif" font-size="48" font-weight="bold" fill="#1a1a1a" text-anchor="middle">${escapedName}</text>
+  ctx.fillStyle = '#3a2a00';
+  ctx.font = 'bold 64px CertFont';
+  ctx.fillText('SERTIFIKAT', 600, 270);
 
-  <text x="600" y="500" font-family="DejaVu Serif, Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
-    Turk tili ${level} darajasi bo'yicha grammatika testidan
-  </text>
-  <text x="600" y="535" font-family="DejaVu Serif, Georgia, serif" font-size="22" fill="#333" text-anchor="middle">
-    <tspan font-weight="bold" fill="#2e7d32">${percent}%</tspan> natija bilan muvaffaqiyatli o'tganligini tasdiqlaydi.
-  </text>
+  ctx.strokeStyle = '#d4af37';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(400, 300);
+  ctx.lineTo(800, 300);
+  ctx.stroke();
 
-  <text x="600" y="620" font-family="DejaVu Serif, Georgia, serif" font-size="20" fill="#555" text-anchor="middle">Sana: ${dateStr}</text>
+  ctx.fillStyle = '#555';
+  ctx.font = '20px CertFont';
+  ctx.fillText("Ushbu sertifikat quyidagi shaxsga topshiriladi:", 600, 360);
 
-  <line x1="230" y1="700" x2="480" y2="700" stroke="#999" stroke-width="1"/>
-  <text x="355" y="730" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#333" text-anchor="middle">O'qituvchi</text>
-  <text x="355" y="755" font-family="DejaVu Serif, Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Sunnatillo hoca</text>
+  ctx.fillStyle = '#1a1a1a';
+  ctx.font = 'bold 48px CertFont';
+  ctx.fillText(String(name), 600, 440);
 
-  <line x1="720" y1="700" x2="970" y2="700" stroke="#999" stroke-width="1"/>
-  <text x="845" y="730" font-family="DejaVu Serif, Georgia, serif" font-size="18" fill="#333" text-anchor="middle">Kurs rahbariyati</text>
-  <text x="845" y="755" font-family="DejaVu Serif, Georgia, serif" font-size="20" font-weight="bold" fill="#1a1a1a" text-anchor="middle">Turk Akademisi</text>
-</svg>`;
+  ctx.fillStyle = '#333';
+  ctx.font = '22px CertFont';
+  ctx.fillText(`Turk tili ${level} darajasi bo'yicha grammatika testidan`, 600, 500);
 
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  // "{percent}%" yashil-qalin, qolgan matn oddiy — qo'lda markazlashtiramiz
+  const percentStr = `${percent}%`;
+  const restStr = " natija bilan muvaffaqiyatli o'tganligini tasdiqlaydi.";
+  ctx.font = 'bold 22px CertFont';
+  const percentWidth = ctx.measureText(percentStr).width;
+  ctx.font = '22px CertFont';
+  const restWidth = ctx.measureText(restStr).width;
+  const lineStartX = 600 - (percentWidth + restWidth) / 2;
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#2e7d32';
+  ctx.font = 'bold 22px CertFont';
+  ctx.fillText(percentStr, lineStartX, 535);
+  ctx.fillStyle = '#333';
+  ctx.font = '22px CertFont';
+  ctx.fillText(restStr, lineStartX + percentWidth, 535);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#555';
+  ctx.font = '20px CertFont';
+  ctx.fillText(`Sana: ${dateStr}`, 600, 620);
+
+  ctx.strokeStyle = '#999';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(230, 700);
+  ctx.lineTo(480, 700);
+  ctx.stroke();
+  ctx.fillStyle = '#333';
+  ctx.font = '18px CertFont';
+  ctx.fillText("O'qituvchi", 355, 730);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.font = 'bold 20px CertFont';
+  ctx.fillText('Sunnatillo hoca', 355, 755);
+
+  ctx.beginPath();
+  ctx.moveTo(720, 700);
+  ctx.lineTo(970, 700);
+  ctx.stroke();
+  ctx.fillStyle = '#333';
+  ctx.font = '18px CertFont';
+  ctx.fillText('Kurs rahbariyati', 845, 730);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.font = 'bold 20px CertFont';
+  ctx.fillText('Turk Akademisi', 845, 755);
+
+  return canvas.toBuffer('image/png');
 }
 
 // ==== Kunlik so'z eslatmasi ====

@@ -1,2 +1,10 @@
 [phases.setup]
-aptPkgs = ["fontconfig", "fonts-dejavu-core", "fonts-dejavu-extra"]
+aptPkgs = [
+  "build-essential",
+  "libcairo2-dev",
+  "libpango1.0-dev",
+  "libjpeg-dev",
+  "libgif-dev",
+  "librsvg2-dev",
+  "pkg-config",
+  "python3"

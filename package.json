@@ -12,6 +12,8 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "canvas": "^3.2.3",
+    "dejavu-fonts-ttf": "^2.37.3",
     "dotenv": "^17.4.2",
     "node-cron": "^4.6.0",
     "sharp": "^0.35.4",
