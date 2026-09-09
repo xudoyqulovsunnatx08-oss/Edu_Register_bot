@@ -1008,19 +1008,27 @@ bot.on('text', async (ctx) => {
 
   // Agar ro'yxatdan o'tish jarayonida bo'lmasa — bu erkin savol
   if (!state) {
-    if (!userLang[chatId]) return; // til hali tanlanmagan bo'lsa, e'tiborsiz qoldiramiz
     if (isAdmin(chatId)) return; // admin o'zi yozsa, bu yerga kirmaydi
+
+    // Til hali tanlanmagan bo'lsa ham (foydalanuvchi /start bosmagan,
+    // botdan umuman foydalanmagan bo'lsa ham) — standart o'zbek tilida
+    // javob beramiz va uni ro'yxatga olib qo'yamiz.
+    const lang = userLang[chatId] || 'uz';
+    if (!userLang[chatId]) {
+      userLang[chatId] = lang;
+      registerUser(chatId, lang);
+    }
 
     if (!botSettings.isOnline) {
       // OFFLINE rejim — AI o'qituvchi nomidan avtomatik javob beradi
       try {
         await ctx.sendChatAction('typing');
-        const answer = await askAI(text, userLang[chatId]);
+        const answer = await askAI(text, lang);
         ctx.reply(answer);
       } catch (e) {
         console.error('AI xatosi:', e.message);
         ctx.reply(
-          userLang[chatId] === 'ru'
+          lang === 'ru'
             ? 'Извините, произошла ошибка. Попробуйте позже или свяжитесь с админом.'
             : "Kechirasiz, xatolik yuz berdi. Keyinroq urinib ko'ring yoki admin bilan bog'laning."
         );
